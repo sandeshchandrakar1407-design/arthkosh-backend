@@ -19,7 +19,7 @@ app.add_middleware(
 def get_news():
     try:
         # Fetching live Mutual Fund news from Mint
-        feed = feedparser.parse("https://www.livemint.com/rss/mutual-fund")
+        feed = feedparser.parse("https://www.livemint.com/rss/money")
         news_list = []
         # Grab the top 5 latest articles
         for item in feed.entries[:5]: 
