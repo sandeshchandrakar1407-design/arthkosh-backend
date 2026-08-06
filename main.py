@@ -31,7 +31,7 @@ def get_news():
         return news_list
     except:
         return [{"title": "Live market data currently unavailable", "date": "Today", "summary": "Check connection."}]
-
+# --- PASTE THIS NEW SECTION IN ITS PLACE ---
 @app.post("/upload-cas")
 def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
     try:
@@ -40,22 +40,38 @@ def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             f.write(file.file.read())
         
-        # casparser cracks the password and reads the portfolio value
+        # casparser cracks the password and reads the portfolio
         parsed_data = casparser.read_cas_pdf(file_path, password, output="dict")
         
         # Clean up: immediately delete the temporary file for security
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
         
-        # Extract the total valuation
-        total_value = parsed_data.get("portfolio_valuation", 0) 
+        # Calculate total valuation manually by reading the scheme market values
+        total_value = 0.0
         
-        # If extraction failed but didn't error out completely
+        for folio in parsed_data.get("folios", []):
+            for scheme in folio.get("schemes", []):
+                # Safely extract the market value found in the PDF
+                val_dict = scheme.get("valuation", {})
+                scheme_value = val_dict.get("value", 0)
+                
+                # Add to our running total
+                if scheme_value:
+                    total_value += float(scheme_value)
+        
+        # If extraction failed completely
         if total_value == 0:
              return {"status": "error", "message": "Could not find valuation in this CAS."}
              
-        return {"status": "success", "portfolio_value": total_value}
+        return {"status": "success", "portfolio_value": round(total_value, 2)}
         
     except Exception as e:
+        # Clean up just in case something crashes
+        if os.path.exists("temp_cas.pdf"):
+            os.remove("temp_cas.pdf")
+        return {"status": "error", "message": f"An error occurred: {str(e)}"}
+
         # Clean up just in case
         if os.path.exists("temp_cas.pdf"):
             os.remove("temp_cas.pdf")
