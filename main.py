@@ -1,12 +1,14 @@
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.middleware.cors import CORSMiddleware
-import casparser
-import feedparser
 import os
+import re
+import casparser
+from pdfminer.high_level import extract_text
+from fastapi import FastAPI, Form, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+import feedparser
 
 app = FastAPI()
 
-# Allow your frontend to talk to this backend
+# Add CORS middleware so Base44 can communicate with your server securely
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,23 +17,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def read_root():
+    return {"message": "ArthKosh API is running smoothly!"}
+
 @app.get("/news")
 def get_news():
     try:
-        # Fetching live Mutual Fund news from Mint
-        feed = feedparser.parse("https://www.livemint.com/rss/money")
-        news_list = []
-        # Grab the top 5 latest articles
-        for item in feed.entries[:5]: 
-            news_list.append({
-                "title": item.title,
-                "date": item.published,
-                "summary": "Click to read full coverage on this update."
+        # Fetch live market news from LiveMint RSS Feed
+        feed = feedparser.parse("https://www.livemint.com/rss/markets")
+        articles = []
+        
+        # Grab the top 10 most recent articles
+        for entry in feed.entries[:10]:
+            articles.append({
+                "title": entry.title,
+                "link": entry.link,
+                "published": getattr(entry, "published", "")
             })
-        return news_list
-    except:
-        return [{"title": "Live market data currently unavailable", "date": "Today", "summary": "Check connection."}]
-# --- PASTE THIS NEW SECTION IN ITS PLACE ---
+            
+        return {"status": "success", "articles": articles}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to fetch news: {str(e)}"}
+
 @app.post("/upload-cas")
 def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
     try:
@@ -40,27 +48,43 @@ def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             f.write(file.file.read())
         
-        # casparser cracks the password and reads the portfolio
+        # Standard casparser attempts to crack the password and read the portfolio
         parsed_data = casparser.read_cas_pdf(file_path, password, output="dict")
+        total_value = 0.0
         
+        # Strategy 1: Read from parsed schemes directly
+        for folio in parsed_data.get("folios", []):
+            for scheme in folio.get("schemes", []):
+                val_dict = scheme.get("valuation", {})
+                
+                # Try getting direct value
+                scheme_value = val_dict.get("value", 0)
+                
+                # Try calculating from NAV * Unit Balance
+                if not scheme_value:
+                    nav = val_dict.get("nav", 0)
+                    balance = scheme.get("close_calculated", scheme.get("close", 0))
+                    if nav and balance:
+                        scheme_value = float(nav) * float(balance)
+                        
+                if scheme_value:
+                    total_value += float(scheme_value)
+        
+        # Strategy 2: ULTIMATE FALLBACK (Scan raw text for KFintech Typos)
+        if total_value == 0:
+            raw_text = extract_text(file_path, password=password)
+            # Find all instances of "Market Value ... INR [Value]"
+            matches = re.findall(r"Market Value.*?INR\s*([0-9,]+\.[0-9]+)", raw_text, re.IGNORECASE)
+            for match in matches:
+                # Remove any commas (e.g. 1,500.00 -> 1500.00) and add to total
+                clean_value = match.replace(",", "")
+                total_value += float(clean_value)
+                
         # Clean up: immediately delete the temporary file for security
         if os.path.exists(file_path):
             os.remove(file_path)
         
-        # Calculate total valuation manually by reading the scheme market values
-        total_value = 0.0
-        
-        for folio in parsed_data.get("folios", []):
-            for scheme in folio.get("schemes", []):
-                # Safely extract the market value found in the PDF
-                val_dict = scheme.get("valuation", {})
-                scheme_value = val_dict.get("value", 0)
-                
-                # Add to our running total
-                if scheme_value:
-                    total_value += float(scheme_value)
-        
-        # If extraction failed completely
+        # If both strategies failed
         if total_value == 0:
              return {"status": "error", "message": "Could not find valuation in this CAS."}
              
@@ -71,8 +95,3 @@ def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
         if os.path.exists("temp_cas.pdf"):
             os.remove("temp_cas.pdf")
         return {"status": "error", "message": f"An error occurred: {str(e)}"}
-
-        # Clean up just in case
-        if os.path.exists("temp_cas.pdf"):
-            os.remove("temp_cas.pdf")
-        return {"status": "error", "message": "Incorrect password or invalid CAMS/KFintech CAS PDF."}
