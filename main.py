@@ -39,7 +39,6 @@ def get_news():
         return {"status": "success", "articles": articles}
     except Exception as e:
         return {"status": "error", "message": f"Failed to fetch news: {str(e)}"}
-
 @app.post("/upload-cas")
 def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
     try:
@@ -48,12 +47,21 @@ def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             f.write(file.file.read())
         
-        # Standard casparser attempts to crack the password and read the portfolio
-        parsed_data = casparser.read_cas_pdf(file_path, password, output="dict")
+        # Read the PDF (This returns the custom CASData object)
+        parsed_data = casparser.read_cas_pdf(file_path, password)
+        
+        # FIX: Convert the CASData object into a standard dictionary safely
+        if hasattr(parsed_data, "model_dump"):
+            data_dict = parsed_data.model_dump()
+        elif hasattr(parsed_data, "dict"):
+            data_dict = parsed_data.dict()
+        else:
+            data_dict = parsed_data  # Fallback just in case
+            
         total_value = 0.0
         
-        # Strategy 1: Read from parsed schemes directly
-        for folio in parsed_data.get("folios", []):
+        # Strategy 1: Read from parsed schemes directly using our new dictionary
+        for folio in data_dict.get("folios", []):
             for scheme in folio.get("schemes", []):
                 val_dict = scheme.get("valuation", {})
                 
