@@ -4,3 +4,4 @@ casparser
 pdfminer.six
 feedparser
 python-multipart
+google-generativeai
