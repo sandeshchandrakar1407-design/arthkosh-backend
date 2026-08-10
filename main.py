@@ -21,7 +21,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ... [Keep your existing /news endpoint here] ...
+@app.get("/")
+def read_root():
+    return {"message": "ArthKosh API is running smoothly!"}
+
+@app.get("/news")
+def get_news():
+    try:
+        # Disguise the Python script as a standard web browser to bypass RSS bot-blockers
+        feedparser.USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        
+        # Fetch live market news from LiveMint RSS Feed
+        feed = feedparser.parse("https://www.livemint.com/rss/markets")
+        articles = []
+        
+        # Grab top 10 articles
+        for entry in feed.entries[:10]:
+            articles.append({
+                "title": entry.title,
+                "link": entry.link,
+                "published": getattr(entry, "published", "Recently")
+            })
+            
+        return {"status": "success", "articles": articles}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to fetch news: {str(e)}"}
 
 @app.post("/upload-cas")
 def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
@@ -71,7 +95,10 @@ def parse_cas(password: str = Form(...), file: UploadFile = File(...)):
             
             # 4. Ask the AI and parse the response
             response = model.generate_content(prompt)
-            ai_data = json.loads(response.text.strip())
+            
+            # Clean markdown code-fence backticks if returned by the model
+            clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+            ai_data = json.loads(clean_text)
             total_value = float(ai_data.get("portfolio_value", 0))
 
         if os.path.exists(file_path):
